@@ -145,11 +145,14 @@ claude plugin install leapctl@leapctl
 ```
 
 Run `leapctl setup` once first and the plugin needs no settings. Or give it the bridge address,
-certificate and key directly (`claude plugin configure leapctl` shows what is set):
+certificate and key when installing:
 
 ```bash
-echo '{"host":"192.168.1.20","cert":"/path/to/client.crt","key":"/path/to/client.key"}' | claude plugin configure leapctl --values-stdin
+claude plugin install leapctl@leapctl --config host=192.168.1.20 --config cert=/path/to/client.crt --config key=/path/to/client.key
 ```
+
+To see or change them later: `claude plugin configure leapctl@leapctl`, or `/plugin configure
+leapctl@leapctl` inside Claude Code.
 
 **Claude Desktop**: add this to `claude_desktop_config.json` and restart Claude Desktop:
 
