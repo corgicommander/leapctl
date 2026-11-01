@@ -37,6 +37,18 @@ protocol and should work, but it hasn't been tested yet. Reports are welcome. Ra
 and Athena use different programming and pairing flows; read-only commands may work there, changes
 probably won't.
 
+## What it runs, sends and stores
+
+* **Runs:** one Ruby program (`bin/leapctl`) that uses only Ruby's standard library. It downloads and
+  installs nothing and starts no other programs. The Claude Code plugin starts the same program as an MCP
+  server (`ruby bin/leapctl mcp`); it doesn't change Claude's settings or permissions.
+* **Sends:** it opens one TLS connection, to the bridge address you configure (port 8081), with your
+  client certificate. Nothing else: no cloud, no telemetry, no update checks.
+* **Stores:** its settings in `~/.config/leapctl/config.json` (file paths, never the key itself), and a
+  backup before every change in `~/.local/share/leapctl/backups` (plus one copy at `LEAP_SNAPSHOT`, if you
+  set it). Backups hold what the bridge reports (rooms, devices and their serial numbers, button
+  programming, schedules), not your certificate or key.
+
 ## Install
 
 You need Ruby 2.6 or newer (macOS includes it; on Linux, `apt install ruby` or similar). There are no
