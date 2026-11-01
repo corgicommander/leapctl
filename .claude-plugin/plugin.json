@@ -1,0 +1,38 @@
+{
+  "name": "leapctl",
+  "version": "0.1.0",
+  "description": "Manage a Lutron Caséta / RA2 Select system over LEAP: see and change what every remote button does, schedules, rooms and names, add devices, with automatic backups and undo.",
+  "author": {
+    "name": "corgicommander",
+    "url": "https://github.com/corgicommander"
+  },
+  "homepage": "https://github.com/corgicommander/leapctl",
+  "repository": "https://github.com/corgicommander/leapctl",
+  "license": "MIT",
+  "keywords": [
+    "lutron",
+    "caseta",
+    "ra2-select",
+    "leap",
+    "pico",
+    "smart-home",
+    "home-assistant"
+  ],
+  "userConfig": {
+    "host": {
+      "type": "string",
+      "title": "Bridge address",
+      "description": "IP address of your Lutron bridge. Leave empty if you ran `leapctl setup`."
+    },
+    "cert": {
+      "type": "file",
+      "title": "Client certificate",
+      "description": "LEAP client certificate (from Home Assistant or `lap-pair`). Leave empty if you ran `leapctl setup`."
+    },
+    "key": {
+      "type": "file",
+      "title": "Client key",
+      "description": "The certificate's private key. Leave empty if you ran `leapctl setup`."
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "leapctl",
+  "description": "leapctl: manage Lutron Caséta / RA2 Select systems over LEAP from Claude",
+  "owner": {
+    "name": "corgicommander"
+  },
+  "plugins": [
+    {
+      "name": "leapctl",
+      "source": "./",
+      "description": "Manage a Lutron Caséta / RA2 Select system over LEAP: remote programming, schedules, rooms, pairing, backups and undo.",
+      "category": "iot",
+      "keywords": [
+        "lutron",
+        "caseta",
+        "ra2-select",
+        "leap",
+        "smart-home"
+      ]
+    }
+  ]
+}
