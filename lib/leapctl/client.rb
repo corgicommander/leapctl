@@ -20,7 +20,7 @@ module Leapctl
   class Client
     DAYS = %w[Sunday Monday Tuesday Wednesday Thursday Friday Saturday].freeze
 
-    attr_reader :config
+    attr_reader :config, :writes
 
     def self.open(config = Config.load, **opts)
       client = new(config, **opts)
@@ -35,17 +35,23 @@ module Leapctl
     # settle: seconds to wait for the AutoProgrammer after pairing or moving a device.
     def initialize(config = Config.load, transport: nil, settle: 30)
       @config = config
-      @transport = transport || TlsTransport.new(config.host, config.cert, config.key)
+      @transport = transport
       @settle = settle
       @cache = {}
+      @writes = 0 # write requests sent: a change that sent none hasn't touched the system
     end
 
     def close
-      @transport.close
+      @transport&.close
     end
 
     def request(type, url, body = nil)
-      @transport.request(type, url, body)
+      transport.request(type, url, body)
+    end
+
+    # Connects on first use, so commands that only read local files (backups) work without the bridge.
+    def transport
+      @transport ||= TlsTransport.new(config.host, config.cert, config.key, ca: config.ca)
     end
 
     def status(resp)
@@ -60,6 +66,7 @@ module Leapctl
     end
 
     def write!(type, url, body = nil)
+      @writes += 1
       resp = request(type, url, body)
       @cache.clear
       raise Error, "#{type} #{url}: #{status(resp)} #{resp['Body'].to_json}" unless status(resp) =~ /^20\d/
@@ -119,6 +126,8 @@ module Leapctl
       dev ? device_label(dev) : z['Name']
     end
 
+    LISTED_BY = { 'device' => 'devices', 'remote' => 'programming', 'zone' => 'zones', 'room' => 'rooms', 'schedule' => 'schedules' }.freeze
+
     # Finds one item by href, exact name, or unique name fragment.
     def pick(items, arg, kind)
       exact = items.select { |i| i[:href] == arg || i[:name].casecmp?(arg.to_s) }
@@ -126,11 +135,16 @@ module Leapctl
       return exact.first[:href] if exact.size == 1
       part = items.select { |i| i[:name].downcase.include?(arg.to_s.downcase) }
       return part.first[:href] if part.size == 1
-      raise Error, "#{kind} #{arg.inspect}: #{part.empty? ? 'not found' : "ambiguous (#{part.map { |i| i[:name] }.join(', ')})"}"
+      raise Error, "#{kind} #{arg.inspect}: #{part.empty? ? "not found (`leapctl #{LISTED_BY[kind]}` lists them)" : "ambiguous (#{part.map { |i| i[:name] }.join(', ')})"}"
     end
 
     def find_device(arg)
       device(pick(devices.map { |d| { href: d['href'], name: device_label(d) } }, arg, 'device'))
+    end
+
+    # Like find_device, among the remotes and keypads only (so a room's name finds its one Pico).
+    def find_remote(arg)
+      device(pick(button_devices.map { |d| { href: d['href'], name: device_label(d) } }, arg, 'remote'))
     end
 
     def find_zone(arg)
@@ -145,12 +159,12 @@ module Leapctl
       pick(schedule_events.map { |e| { href: e['href'], name: e['Name'] } }, arg, 'schedule')
     end
 
-    # A programming target given as an href or a name: a schedule name, else a device name.
+    # A programming target given as an href or a name: a schedule name, else a remote's name.
     def find_target(arg)
       return arg if arg.start_with?('/')
       find_event(arg)
     rescue Error
-      find_device(arg)['href']
+      find_remote(arg)['href']
     end
 
     # All preset hrefs a programming model points at (SingleAction, AdvancedToggle, DualAction, Raise/Lower).
@@ -281,44 +295,121 @@ module Leapctl
 
     # ---- backups -------------------------------------------------------------------------------
 
+    # Everything leapctl can restore, plus context. Actions are sorted (by light, then level) and leave
+    # out the assignments' own hrefs: the bridge lists actions in no fixed order and renumbers an
+    # assignment whenever Lutron re-creates it, so two snapshots of the same programming are identical.
     def snapshot
       {
         taken_at: Time.now.iso8601,
         project: read('/project')&.dig('Project'),
-        system: { status: read('/system/status'), away: read('/system/away'), services: read('/service'), link: read('/link') },
+        system: { status: read('/system/status'), away: read('/system/away'), services: read('/service'), link: links },
         areas: areas,
         devices: devices,
         zones: zones,
         column_groups: button_devices.each_with_object({}) do |d, h|
-          g = column_group(d) and h[d['href']] = (g['AffectedZones'] || []).map { |z| z.dig('Zone', 'href') }
+          g = column_group(d) and h[d['href']] = sort_actions((g['AffectedZones'] || []).map { |z| z.dig('Zone', 'href') }) { |z| [z, 0] }
         end,
-        programming: button_devices.to_h { |d| [d['href'], device_programming(d)] },
-        schedules: schedule_events.map do |e|
-          e.merge('EnableState' => schedule_status(e['href']), 'Actions' => presets_of(e['href']).flat_map { |p| assignments(p) })
+        programming: button_devices.to_h do |d|
+          [d['href'], device_programming(d).map do |b|
+            b.merge(actions: sort_actions(b[:actions].map { |a| a.reject { |k, _| k == :href } }) { |a| [a[:zone], a[:level]] })
+          end]
         end,
-        virtual_buttons: virtual_buttons.map { |vb| vb.merge('Actions' => presets_of(vb['href']).flat_map { |p| assignments(p) }) },
-        occupancy_groups: (read('/occupancygroup')&.dig('OccupancyGroups') || []).map do |o|
-          o.merge('Actions' => presets_of(o['href']).flat_map { |p| assignments(p) })
-        end
+        schedules: schedule_events.map { |e| e.merge('EnableState' => schedule_status(e['href']), 'Actions' => stored_actions(e['href'])) },
+        virtual_buttons: virtual_buttons.map { |vb| vb.merge('Actions' => stored_actions(vb['href'])) },
+        occupancy_groups: (read('/occupancygroup')&.dig('OccupancyGroups') || []).map { |o| o.merge('Actions' => stored_actions(o['href'])) }
       }
     end
 
-    # Writes <backup_dir>/<time>.json, and the snapshot path if configured. Returns the backup path.
+    # The RF links, without anything but their numbers and channel: on Clear Connect Type X systems
+    # (RadioRA 3, HomeWorks) /link may also hold the network's key, which has no place in a backup.
+    def links
+      body = read('/link') or return nil
+      { 'Links' => (body['Links'] || []).map { |l| l.select { |k, _| %w[href Parent LinkType LinkNumber RFProperties].include?(k) } } }
+    end
+
+    # A schedule's, scene's, template's or occupancy group's assignments, the way a snapshot keeps them.
+    def stored_actions(owner_href)
+      list = presets_of(owner_href).flat_map { |p| assignments(p) }.map { |a| a.reject { |k, _| k == 'href' } }
+      sort_actions(list) { |a| [a.dig('AffectedZone', 'href'), a['Level']] }
+    end
+
+    # Sorts by zone number (/zone/9 before /zone/10), then level, then the rest, for a stable order.
+    def sort_actions(list)
+      list.sort_by do |a|
+        zone, level = yield(a)
+        [zone.to_s[/\d+\z/].to_i, zone.to_s, level.to_f, a.to_s]
+      end
+    end
+
+    # Writes <backup_dir>/<time>.json, and the snapshot path if configured (without the time, so a
+    # git-tracked copy changes only with the programming). Both are readable by you only. Returns the
+    # backup path.
     def backup
-      json = JSON.pretty_generate(snapshot)
-      FileUtils.mkdir_p(config.backup_dir)
+      snap = snapshot
+      FileUtils.mkdir_p(config.backup_dir, mode: 0o700)
       path = File.join(config.backup_dir, "#{Time.now.strftime('%Y%m%d-%H%M%S')}.json")
       path = path.sub('.json', "-#{rand(1000)}.json") if File.exist?(path)
-      File.write(path, json)
+      private_write(path, pretty(snap))
       if config.snapshot
         FileUtils.mkdir_p(File.dirname(config.snapshot))
-        File.write(config.snapshot, json)
+        private_write(config.snapshot, pretty(snap.reject { |k, _| k == :taken_at }))
       end
       path
     end
 
+    # Empty lists come out as [] and {} on every Ruby (older json versions spread them over lines). JSON
+    # strings can't hold a raw line break, so this only touches the layout, never a name.
+    def pretty(data)
+      JSON.pretty_generate(data).gsub(/\[\n\s*\]/, '[]').gsub(/\{\n\s*\}/, '{}')
+    end
+
+    def private_write(path, text)
+      File.write(path, text, perm: 0o600)
+      File.chmod(0o600, path) rescue nil # perm: only applies to a new file
+    end
+
+    BACKUP_NAME = /\A\d{8}-\d{6}(-\d+)?\.json\z/.freeze
+
     def backups
-      Dir[File.join(config.backup_dir, '*.json')].sort
+      Dir[File.join(config.backup_dir, '*.json')].select { |f| File.basename(f) =~ BACKUP_NAME }.sort
+    end
+
+    # Which bridge a snapshot belongs to: its project's GUID (every backup has it), else the serial
+    # number of /device/1 (the bridge or main repeater).
+    def self.bridge_of(snap)
+      snap.dig('project', 'GUID') || (snap['devices'] || []).find { |d| d['href'] == '/device/1' }&.dig('SerialNumber')
+    end
+
+    def bridge
+      read('/project')&.dig('Project', 'GUID') || device('/device/1')&.dig('SerialNumber')
+    end
+
+    # This bridge's backups, newest first; a shared folder may also hold other bridges' backups.
+    def own_backups
+      id = bridge.to_s
+      backups.reverse.lazy.select do |path|
+        other = (self.class.bridge_of(JSON.parse(File.read(path, encoding: 'UTF-8'))) rescue nil)
+        other.nil? || id.empty? || other.to_s == id
+      end
+    end
+
+    # A backup by its file name (as `backups` lists it) or path. Only leapctl's own backups and the
+    # snapshot file are read, and an error never quotes a file's content.
+    def backup_path(name)
+      path = File.expand_path(name.to_s, config.backup_dir)
+      real = File.file?(path) ? File.realpath(path) : nil
+      dir = File.directory?(config.backup_dir) ? File.realpath(config.backup_dir) : nil
+      snap = config.snapshot && File.file?(config.snapshot) ? File.realpath(config.snapshot) : nil
+      return real if real && ((dir && real.start_with?(dir + File::SEPARATOR)) || real == snap)
+      raise Error, "no backup #{name} (see `leapctl backups`)"
+    end
+
+    def load_backup(name)
+      snap = JSON.parse(File.read(backup_path(name), encoding: 'UTF-8'))
+      raise JSON::ParserError unless snap.is_a?(Hash) && snap.key?('programming')
+      snap
+    rescue JSON::ParserError
+      raise Error, "#{File.basename(name.to_s)} isn't a leapctl backup"
     end
 
     # Programming in a comparable shape, keyed by target: "column:/device/N" => zones, or a button,
@@ -343,8 +434,11 @@ module Leapctl
 
     # Puts programming back to a backup: removes what was added, re-adds what was removed, fixes levels.
     # Targets that no longer exist are skipped. Returns the changes (made unless dry_run).
-    def restore(backup_path, dry_run: true)
-      want = self.class.programming_state(JSON.parse(File.read(backup_path)))
+    def restore(backup, dry_run: true)
+      snap = load_backup(backup)
+      theirs = self.class.bridge_of(snap).to_s
+      raise Error, "#{File.basename(backup.to_s)} is a backup of another bridge" unless theirs.empty? || bridge.to_s.empty? || theirs == bridge.to_s
+      want = self.class.programming_state(snap)
       have = self.class.programming_state(JSON.parse(JSON.generate(snapshot)))
       column_buttons = button_devices.select { |d| column_group(d) }.flat_map { |d| device_programming(d).map { |b| b[:button] } }
       changes = []
@@ -481,16 +575,15 @@ module Leapctl
       targets.flat_map { |t| unassign_one(t, zone_href).map { |x| x.start_with?('/button') ? button_label(x) : x } }
     end
 
-    # Clears a button (and its template, for engraved remotes). Returns the deleted assignment hrefs.
+    # Clears a button and, on an engraved remote, its template and every remote button sharing it, so
+    # the AutoProgrammer has nothing to copy back. Returns a description of what was cleared.
     def clear_button(button_href)
       tmpl = button_href.start_with?('/button/') ? linked_template(button_href) : nil
-      targets = [button_href] + (tmpl.is_a?(String) ? [tmpl] + template_buttons(tmpl) : [])
-      targets.uniq.flat_map do |t|
-        presets_of(t).flat_map { |p| assignments(p) }.map do |a|
-          write!('DeleteRequest', a['href'])
-          a['href']
-        end
+      clear = lambda do |t|
+        n = presets_of(t).flat_map { |p| assignments(p) }.each { |a| write!('DeleteRequest', a['href']) }.size
+        n.zero? ? 'already empty' : "cleared #{n} #{n == 1 ? 'action' : 'actions'}"
       end
+      follow_template(button_href, tmpl, "#{button_label(button_href)}: #{clear.call(button_href)}") { |t| clear.call(t) }
     end
 
     def button_label(button_href)
@@ -558,7 +651,7 @@ module Leapctl
     def pair(minutes, auto_program:, before_backup:, area_href:, name: nil, events: nil)
       before = devices.map { |d| d['SerialNumber'] }
       before_templates = templates.map { |v| v['href'] }
-      events ||= TlsTransport.new(config.host, config.cert, config.key)
+      events ||= TlsTransport.new(config.host, config.cert, config.key, ca: config.ca)
       events.send_message('SubscribeRequest', '/device/status/deviceheard', nil, 'heard')
       write!('UpdateRequest', '/system/status', { SystemStatus: { InAssociationMode: true } })
       found = []

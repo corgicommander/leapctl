@@ -1,23 +1,30 @@
 # leapctl
 
-**See and change everything your Lutron Caséta / RA2 Select system does, from the command line or from
-Claude**: what every remote button does, schedules, rooms and names, adding and removing devices.
-Backups are automatic and every change can be undone.
+> Written with [Claude Code](https://claude.com/claude-code), and tested command by command on a real
+> RA2 Select system (see [What it can do](#what-it-can-do)).
 
-leapctl talks to your bridge directly over **LEAP**, the local protocol the Lutron app uses. Nothing goes
-through the cloud. It is unofficial and not affiliated with Lutron Electronics; use it at your own risk.
+**A Lutron companion for Home Assistant.** Home Assistant's Lutron Caséta integration lets you use your
+lights and Pico remotes, but it can't change Lutron's own programming: what a Pico button does by
+itself, Lutron's schedules, rooms and names, or adding a device. leapctl does that, from the command
+line or from Claude Code, with the certificate Home Assistant already has. Together with Home
+Assistant, Claude Code can then look after both sides: your automations, and what the Lutron system
+does on its own.
+
+leapctl talks to the Lutron bridge directly over **LEAP**, the local protocol Home Assistant's
+integration uses. Nothing goes through the cloud. It is unofficial and not affiliated with Lutron
+Electronics; use it at your own risk.
 
 ## Why
 
-The Lutron app hides a lot. Two examples that this tool was built to fix:
-
-* **Hidden button actions.** When you add a remote, Lutron's *AutoProgrammer* quietly gives its buttons
-  default actions, and later *re-copies* them from per-room templates, undoing your edits. If you
-  trigger your remotes from Home Assistant, you may not notice until someone asks why a light is on.
-  `leapctl programming` shows what every button does, and `leapctl pair --no-auto-program` adds a
-  remote with no Lutron actions at all.
-* **No overview, no undo.** The app has no list of everything, no export and no undo. leapctl takes
-  a backup before every change, can `diff` any two states, and can `restore` a backup.
+* **Hidden button actions.** When you add a remote, Lutron's *AutoProgrammer* automatically gives its
+  buttons actions, and later re-copies them from per-room templates, undoing your edits. If Home
+  Assistant automations handle your Pico presses, a press can then do two things at once.
+  `leapctl programming` shows what every button does in Lutron, `leapctl clear-button` removes Lutron's
+  action (the press still reaches Home Assistant), and `leapctl pair --no-auto-program` adds a remote
+  and undoes what the AutoProgrammer assigned.
+* **No overview, no backup.** The Lutron app has no overview of every button and no export of the
+  programming. leapctl takes a backup before every change; `diff` compares the system with a backup,
+  and `restore` puts back which lights each button, template, scene and schedule controls.
 
 ## What it can do
 
@@ -25,69 +32,75 @@ The Lutron app hides a lot. Two examples that this tool was built to fix:
 |---|---|---|
 | Overview and health | `doctor`, `devices`, `rooms`, `zones`, `programming`, `schedules` | yes |
 | Control | `level`, `fan`, `press` | yes |
-| Remote programming | `assign`, `unassign`, `clear-button` (any remote type, including templates) | yes |
+| Remote programming | `assign`, `unassign`, `clear-button` | yes: 3-button raise/lower, 2-button and engraved 4-button scene Picos, with their templates |
 | Names and rooms | `rename-device`, `rename-zone`, `rename-room`, `room-add`, `room-delete`, `move-device` | yes |
-| Schedules | `schedule-add`, `-time`, `-days`, `-rename`, `-enable`, `-disable`, `-delete` | yes |
-| Adding and removing devices | `pair`, `remove-device` | yes (Pico remote) |
+| Lutron schedules | `schedule-add`, `-time`, `-days`, `-rename`, `-enable`, `-disable`, `-delete` | yes |
+| Adding and removing devices | `pair`, `remove-device` | yes, with Picos |
 | Safety | `backup`, `backups`, `diff`, `restore` | yes |
 | Dimmer trim | `trim` | read and no-op write only |
 
-Tested with an **RA2 Select main repeater** (LEAP 01.124). Caséta Smart Bridge (Pro) uses the same
-protocol and should work, but it hasn't been tested yet. Reports are welcome. RadioRA 3, HomeWorks QSX
-and Athena use different programming and pairing flows; read-only commands may work there, changes
-probably won't.
+Tested on one **RA2 Select main repeater** (LEAP 01.124) with Picos. On a **Caséta Smart Hub** (or PRO)
+the read commands should work; changes and pairing haven't been tested there yet. Reports are welcome:
+please share the summary lines of `leapctl doctor`, not your device names. Wall keypads, the 4-button
+L31 Pico and other remotes are untested. RadioRA 3, HomeWorks QSX and Athena work differently;
+read-only commands may work there, changes probably won't.
 
-## What it runs, sends and stores
+## What you need
 
-* **Runs:** one Ruby program (`bin/leapctl`) that uses only Ruby's standard library. It downloads and
-  installs nothing and starts no other programs. The Claude Code plugin starts the same program as an MCP
-  server (`ruby bin/leapctl mcp`); it doesn't change Claude's settings or permissions.
-* **Sends:** it opens one TLS connection, to the bridge address you configure (port 8081), with your
-  client certificate. Nothing else: no cloud, no telemetry, no update checks.
-* **Stores:** its settings in `~/.config/leapctl/config.json` (file paths, never the key itself), and a
-  backup before every change in `~/.local/share/leapctl/backups` (plus one copy at `LEAP_SNAPSHOT`, if you
-  set it). Backups hold what the bridge reports (rooms, devices and their serial numbers, button
-  programming, schedules), not your certificate or key.
+* **Home Assistant with the Lutron Caséta integration** set up for your bridge. leapctl reuses its
+  client certificate, and Home Assistant stays connected while leapctl works.
+* **Access to Home Assistant's config folder** from the computer that runs leapctl. On Home Assistant
+  OS, the Samba share app makes it a network folder: on a Mac, Finder > Go > Connect to Server,
+  `smb://homeassistant.local/config`, which appears as `/Volumes/config`. leapctl reads the certificate
+  from there every time, so keep the share mounted (for example as a Login Item).
+* **Ruby 2.6 or newer.** macOS still includes it (`/usr/bin/ruby`); on Linux, `apt install ruby` or
+  similar. There are no gems to install.
+* **A network path to the bridge** (TCP port 8081) from that computer.
+* For Claude: **Claude Code** with the plugin below. The command line works without it.
+
+Without Home Assistant, see [below](#without-home-assistant).
 
 ## Install
 
-You need Ruby 2.6 or newer (macOS includes it; on Linux, `apt install ruby` or similar). There are no
-gems to install.
+**Claude Code** (2.1.292 or later for this one line; inside Claude Code,
+`/plugin install leapctl --marketplace corgicommander/leapctl` works from 2.1.275):
 
 ```bash
-git clone https://github.com/corgicommander/leapctl.git
-cd leapctl
-bin/leapctl help
+claude plugin install leapctl --marketplace corgicommander/leapctl
 ```
 
-Add `bin/` to your PATH, or symlink `bin/leapctl` somewhere on it.
+Then ask Claude to "set up leapctl": it asks for Home Assistant's config folder and runs setup for you.
+On older versions: `claude plugin marketplace add corgicommander/leapctl`, then
+`claude plugin install leapctl@leapctl`. The plugin needs Claude Code (or Cowork on a computer that can
+reach the bridge); claude.ai chat doesn't run its tools.
+
+**Command line**, no git needed (into your home folder, and onto your PATH):
+
+```bash
+cd ~ && curl -fsSL https://github.com/corgicommander/leapctl/releases/latest/download/leapctl.tar.gz | tar xz
+echo 'export PATH="$HOME/leapctl/exe:$PATH"' >> ~/.zshrc && source ~/.zshrc
+leapctl help
+```
+
+Or `git clone https://github.com/corgicommander/leapctl.git` and add its `exe` folder to your PATH the
+same way. On Linux, use `~/.bashrc` instead of `~/.zshrc`.
 
 ## Connect to your bridge
 
-LEAP uses a client certificate that the bridge signs once, after you press its button. If you already
-have one, reuse it.
-
-**Home Assistant users** already have one: the Lutron Caséta integration stores it in Home Assistant's
-config folder. Copy or mount that folder, then:
-
 ```bash
-leapctl setup --from-home-assistant=/path/to/homeassistant/config
+leapctl setup --from-home-assistant=/Volumes/config
 ```
 
-**Everyone else** can create one with [pylutron-caseta](https://github.com/gurumitts/pylutron-caseta)
-(the library behind Home Assistant's integration). Run `pip install 'pylutron-caseta[cli]'`, then
-`lap-pair <bridge-ip>`, and press the button on the back of the bridge when asked. Then:
-
-```bash
-leapctl setup --from-pylutron
-```
-
-Or give the paths yourself: `leapctl setup --host=192.168.1.20 --cert=client.crt --key=client.key`.
-The settings go to `~/.config/leapctl/config.json` (paths only). Environment variables `LEAP_HOST`,
-`LEAP_CERT`, `LEAP_KEY` and `LEAP_BACKUP_DIR` override it. `setup` finishes by running `doctor`:
+`setup` reads the Lutron Caséta integration's certificate files in that folder, and the bridge's
+address from Home Assistant's `.storage/core.config_entries` (only the Lutron entry; leapctl ignores
+the other integrations' settings in that file). It checks the files, connects once, and only then
+saves the settings to `~/.config/leapctl/config.json` (paths only, never the key itself). It also
+saves the path of the bridge's CA file, so leapctl checks that it is talking to your bridge. If it
+can't find the address, add `--host=<bridge IP>`. Then it runs `doctor`:
 
 ```text
 bridge 192.168.1.20: Lutron RA2 Select Project, LEAP 01.124
+bridge certificate: checked against lutron_caseta-192.168.1.20-ca.pem
 session role: Admin
 38 devices, 27 zones, 12 rooms, 2 schedules
 pairing mode: off
@@ -96,32 +109,45 @@ AutoProgrammer: Enabled
 done, with warnings
 ```
 
+Environment variables `LEAP_HOST`, `LEAP_CERT`, `LEAP_KEY`, `LEAP_CA` and `LEAP_BACKUP_DIR` override
+the saved settings (`setup` says so when one is set).
+
+### Without Home Assistant
+
+leapctl doesn't need Home Assistant to run, only a LEAP client certificate signed by your bridge.
+[pylutron-caseta](https://github.com/gurumitts/pylutron-caseta)'s `lap-pair` makes one. It needs Python
+3.10 or newer: run `pipx install 'pylutron-caseta[cli]'`, then `lap-pair <bridge IP>`, and press the
+button on the back of the bridge when asked. Then run `leapctl setup --from-pylutron`, or give any
+certificate and key with `leapctl setup --host=<bridge IP> --cert=<file> --key=<file>` (plus
+`--ca=<file>` with the bridge's CA, if you have it).
+
 ## Quick start
 
 ```bash
-leapctl programming                      # what every remote button does
-leapctl programming "Kitchen / Keypad"   # one remote
+leapctl programming                      # what every remote button does in Lutron
+leapctl programming "Kitchen / Pico"     # one remote
 leapctl schedules                        # Lutron's own schedules
 leapctl level "Kitchen / Main Lights" 60
 ```
 
 Names can be the full "Room / Device" label, the device name alone, a unique fragment, or an href
-such as `/zone/12`.
+such as `/zone/12`. `leapctl help` lists every command, and `leapctl <command> --help` explains one.
 
 ## Making changes safely
 
-Every command that changes the system:
-
-1. needs `--yes`;
-2. saves a full backup first (`~/.local/share/leapctl/backups`, or `--backup-dir`);
-3. can be undone: `leapctl diff` shows what changed since the latest backup, and `leapctl restore --yes`
-   puts programming back to the backup taken before the latest command.
+Every command that changes the system needs `--yes` and saves a backup first
+(`~/.local/share/leapctl/backups`, or `--backup-dir`); a change refused before it sent anything
+leaves none. `leapctl diff` compares the system with the latest backup, and `leapctl restore --yes`
+goes back to the backup taken before the latest change. Both use only backups of the bridge you're
+connected to, and cover which lights (with level, fade and delay) each existing button, template,
+scene and schedule controls. They don't cover names, rooms, moves, schedule times, days or on/off,
+trim, or anything added or deleted since the backup: undo those with the matching command.
 
 ```bash
 leapctl assign "Pico 1" "Family Room / Floor Lamp" --yes   # a 3-button raise/lower Pico: all buttons
 leapctl assign /button/139 "Kitchen / Sink" 50 --yes       # one button, level 50%
 leapctl unassign all "Den / Grow Light" --yes             # off every remote, schedule and scene
-leapctl clear-button /button/150 --yes                    # no Lutron action; the press still reaches Home Assistant
+leapctl clear-button /button/150 --yes                    # no Lutron action (engraved Picos: also their template); the press still reaches Home Assistant
 leapctl schedule-add "Porch" daily sunset-15 --yes
 leapctl assign "Porch" "Exterior / Porch Lights" --yes
 ```
@@ -133,45 +159,68 @@ leapctl pair "Office" --name="Desk Pico" --no-auto-program --yes
 ```
 
 Then press and hold the device's button until its light flashes rapidly (for a Pico, the bottom
-button for about 10 seconds). Before pairing, decide whether Lutron's **AutoProgrammer** may assign
-functions:
+button for about 10 seconds). Lutron's **AutoProgrammer** always runs after a device is added, so
+decide first whether to keep what it assigns:
 
-* `--auto-program` keeps whatever Lutron assigns, and reports what it also changed elsewhere;
-* `--no-auto-program` clears the new device's programming and any new templates, and restores every
-  other remote to how it was.
+* `--auto-program` keeps it, and reports what it also changed on other remotes;
+* `--no-auto-program` waits 30 seconds for it, then clears the new device's programming and any new
+  templates, and puts every other remote back the way it was.
 
 `move-device` asks the same question, because moving a device to another room also runs the
-AutoProgrammer.
+AutoProgrammer. `pair` has been tested with Picos; for dimmers, switches, shades and sensors, keep the
+Lutron app as the fallback.
 
-## Use with Claude
+## With Home Assistant
 
-leapctl includes an MCP server (`leapctl mcp`) that gives Claude a `lutron_*` tool for every command.
-Changes need the user's OK (`confirm: true`), and Claude is told to ask the AutoProgrammer question
-before pairing or moving devices.
+Home Assistant's Lutron Caséta integration sees button presses and light levels live, but reads
+devices, names and rooms only when it starts or is reloaded (Settings > Devices & services > Lutron
+Caséta > ⋮ > Reload). leapctl prints what Home Assistant needs after each change:
 
-**Claude Code plugin** (MCP server + a skill with the safety rules):
+* **New device** (`pair`): reload. It appears in the HA area named like its Lutron room. Give it its
+  final name and room when pairing: Home Assistant creates the entity IDs from them the first time it
+  sees the device.
+* **Removed device** (`remove-device`): reload, then delete the device in Home Assistant (it refuses
+  before the reload).
+* **Renamed device or room, moved device**: reload to show the new names. Entity IDs and HA areas stay
+  as they are. Home Assistant shows only the part of a device name after its last `_`.
+* **Button programming and Lutron schedules**: nothing to do. Presses still reach Home Assistant.
+* **Renamed light** (`rename-zone`): no effect in Home Assistant, which names Caséta and RA2 Select
+  lights after their device.
 
-```bash
-claude plugin marketplace add corgicommander/leapctl
-claude plugin install leapctl@leapctl
-```
+A reload makes the Lutron entities unavailable for a moment, so automations that trigger on state
+changes should ignore `unavailable` (`not_from: [unavailable, unknown]`). For Pico automations,
+device triggers keep working after renames; event triggers that filter on `device_name` or
+`area_name` don't.
 
-Run `leapctl setup` once first and the plugin needs no settings. Or give it the bridge address,
-certificate and key when installing:
+leapctl handles the Lutron side only. For Claude Code to manage Home Assistant itself (automations,
+reloads, removing old devices), give it a Home Assistant connection too, for example Home Assistant's
+built-in [MCP Server](https://www.home-assistant.io/integrations/mcp_server/) integration or the
+community [ha-mcp](https://github.com/homeassistant-ai/ha-mcp) server. Neither is affiliated with
+leapctl.
 
-```bash
-claude plugin install leapctl@leapctl --config host=192.168.1.20 --config cert=/path/to/client.crt --config key=/path/to/client.key
-```
+## Use with Claude Code
 
-To see or change them later: `claude plugin configure leapctl@leapctl`, or `/plugin configure
-leapctl@leapctl` inside Claude Code.
+The plugin runs leapctl's MCP server, which gives Claude a `lutron_*` tool for every command, plus a
+skill with the safety rules. Claude asks you before every change, and Claude Code then shows its own
+approval prompt for each one (also for setup), even in auto mode: that prompt is the safeguard, and
+it can't be switched to "always allow". Claude asks the AutoProgrammer question before pairing or
+moving a device, and knows how Lutron programs each kind of Pico. Things to ask:
 
-**Claude Desktop**: add this to `claude_desktop_config.json` and restart Claude Desktop:
+* "Set up leapctl from my Home Assistant config folder."
+* "What does the Kitchen Pico do in Lutron?"
+* "Make the bottom button of the Bedside Pico do nothing in Lutron; Home Assistant handles it."
+* "Add a new Pico to the Office without any Lutron actions."
+
+The plugin and the command line share one set of settings (`~/.config/leapctl/config.json`). To
+change the bridge or certificate later, ask Claude to set up leapctl again, or run `leapctl setup`.
+
+**Claude Desktop** (chat): run `leapctl setup` first, then add this to `claude_desktop_config.json`
+and restart Claude Desktop:
 
 ```json
 {
   "mcpServers": {
-    "leapctl": { "command": "ruby", "args": ["/path/to/leapctl/bin/leapctl", "mcp"] }
+    "leapctl": { "command": "/usr/bin/ruby", "args": ["/path/to/leapctl/exe/leapctl", "mcp"] }
   }
 }
 ```
@@ -190,12 +239,32 @@ Read this before editing remotes by hand. More detail, with the raw requests, is
 * **Custom-engraved and 2-button Picos without an engraving** are programmed button by button.
 * **Schedules and scenes** are programmed the same way as buttons.
 
-## Not supported
+## Limits
 
-* Firmware updates, and cloud services (Alexa, Google Home, IFTTT, the Lutron account): use the app.
 * Turning the AutoProgrammer off: the bridge refuses (`/service/autoprog` doesn't accept updates).
+* `programming` shows Lutron's preset assignments. Fan, shade and audio Picos may keep their actions in
+  other lists that it doesn't show yet.
 * Shades, occupancy sensors and Smart Away are read-only so far: they appear in backups, but no
   commands change them.
+* Firmware updates, and cloud services (Alexa, Google Home, IFTTT, the Lutron account): use the app.
+
+## What it runs, sends and stores
+
+* **Runs:** one Ruby program (`exe/leapctl`) that uses only Ruby's standard library. It downloads and
+  installs nothing and starts no other programs. The Claude Code plugin starts the same program as an
+  MCP server (`ruby exe/leapctl mcp`); it doesn't change Claude's settings or permissions.
+* **Reads:** the certificate, key and CA files you give it; at setup, in Home Assistant's config
+  folder, the Lutron entry of `.storage/core.config_entries` (for the bridge's address); and its own
+  backups (`diff` and `restore` accept nothing else).
+* **Sends:** one TLS connection to the bridge address you configure (port 8081), with your client
+  certificate; `pair` opens a second one to listen for new devices. When Home Assistant knows the
+  bridge only by Lutron's ID for it, `setup` also looks up `lutron-<id>.local` on your network.
+  Nothing else: no cloud, no telemetry, no update checks.
+* **Stores:** its settings in `~/.config/leapctl/config.json` (file paths, never the key itself), and a
+  backup before every change in `~/.local/share/leapctl/backups` (plus one copy without the time at
+  `LEAP_SNAPSHOT`, if you set it, so a copy kept in git changes only with the programming). It makes
+  both readable by you only. Backups hold what the bridge reports (rooms, devices and their serial
+  numbers, button programming, schedules), not your certificate, key or network keys.
 
 ## Development
 
@@ -203,12 +272,21 @@ Read this before editing remotes by hand. More detail, with the raw requests, is
 ruby test/test_leapctl.rb     # offline tests against a simulated bridge (test/fake_bridge.rb)
 ```
 
+A release attaches `leapctl.tar.gz`, made with `git archive --format=tar.gz --prefix=leapctl/ -o
+leapctl.tar.gz v<version>` (the install line above unpacks it into `leapctl/`).
+
 The code is in `lib/leapctl/`: `client.rb` (the model and all operations), `commands.rb` (one
-definition per command, shared by the CLI and the MCP server), `cli.rb`, `mcp.rb`, `transport.rb`
-and `config.rb`.
+definition per command, shared by the CLI and the MCP server), `setup.rb`, `cli.rb`, `mcp.rb`,
+`transport.rb` and `config.rb`.
 
-## License
+## License and credits
 
-MIT, see [LICENSE](LICENSE). Pairing certificates come from
-[pylutron-caseta](https://github.com/gurumitts/pylutron-caseta), whose authors first documented much of
-LEAP. Lutron, Caséta, RadioRA and Pico are trademarks of Lutron Electronics Co., Inc.
+MIT, see [LICENSE](LICENSE). Home Assistant's certificate comes from the pairing code of
+[pylutron-caseta](https://github.com/gurumitts/pylutron-caseta), the library behind its Lutron
+integration, whose authors first documented much of LEAP. Thanks also to the add-device script in
+[pylutron-caseta issue #77](https://github.com/gurumitts/pylutron-caseta/issues/77) and to
+[alxgmpr's LEAP reference](https://github.com/alxgmpr/leap-api). Related projects:
+[lutron-cli](https://github.com/omarshahine/lutron-cli) (control, renames and rooms, with a Claude
+Code plugin) and [tron](https://github.com/tessro/tron) (a command-line tool for Caséta).
+
+Lutron, Caséta, RadioRA and Pico are trademarks of Lutron Electronics Co., Inc.

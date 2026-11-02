@@ -8,9 +8,11 @@ require 'json'
 class FakeBridge
   TYPES = { 'area' => 'Area', 'device' => 'Device', 'zone' => 'Zone', 'button' => 'Button', 'buttongroup' => 'ButtonGroup',
             'programmingmodel' => 'ProgrammingModel', 'preset' => 'Preset', 'presetassignment' => 'PresetAssignment',
-            'vbutton' => 'VirtualButton', 'virtualbutton' => 'VirtualButton', 'timeclockevent' => 'TimeclockEvent' }.freeze
+            'vbutton' => 'VirtualButton', 'virtualbutton' => 'VirtualButton', 'timeclockevent' => 'TimeclockEvent',
+            'project' => 'Project' }.freeze
   LISTS = { '/area' => ['Areas', %w[area]], '/device' => ['Devices', %w[device]], '/zone' => ['Zones', %w[zone]],
-            '/timeclockevent' => ['TimeclockEvents', %w[timeclockevent]], '/virtualbutton' => ['VirtualButtons', %w[virtualbutton vbutton]] }.freeze
+            '/timeclockevent' => ['TimeclockEvents', %w[timeclockevent]], '/virtualbutton' => ['VirtualButtons', %w[virtualbutton vbutton]],
+            '/link' => ['Links', %w[link]] }.freeze
 
   attr_reader :objects, :commands
 
@@ -31,6 +33,7 @@ class FakeBridge
   # ---- the house: Kitchen with a dimmer and an engraved Bedside Pico; Den with a lamp and a Column Pico
 
   def build
+    add('/project', 'Name' => 'Fake Project', 'ProductType' => 'Fake Bridge', 'GUID' => 'fake-bridge-guid')
     add('/area/1', 'Name' => 'root')
     add('/area/2', 'Name' => 'Kitchen', 'Parent' => { 'href' => '/area/1' })
     add('/area/3', 'Name' => 'Den', 'Parent' => { 'href' => '/area/1' })
@@ -60,6 +63,9 @@ class FakeBridge
     add('/virtualbutton/1', 'Name' => 'Arriving Home', 'ProgrammingModel' => { 'href' => '/programmingmodel/500' })
     add('/programmingmodel/500', 'ProgrammingModelType' => 'SingleActionProgrammingModel', 'Preset' => { 'href' => '/preset/500' })
     add('/timeclock/1', {})
+    # an RA3-style link with its network key, which backups must leave out
+    add('/link/1', 'LinkType' => 'ClearConnectTypeX', 'LinkNumber' => 1,
+                   'ClearConnectTypeXLinkProperties' => { 'PANID' => 1, 'NetworkMasterKey' => 'not-for-backups' })
   end
 
   def add(href, obj)

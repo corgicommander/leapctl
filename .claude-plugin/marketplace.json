@@ -1,6 +1,6 @@
 {
   "name": "leapctl",
-  "description": "leapctl: manage Lutron Caséta / RA2 Select systems over LEAP from Claude",
+  "description": "leapctl: a Lutron Caséta / RA2 Select companion for Home Assistant and Claude Code",
   "owner": {
     "name": "corgicommander"
   },
@@ -8,14 +8,15 @@
     {
       "name": "leapctl",
       "source": "./",
-      "description": "Manage a Lutron Caséta / RA2 Select system over LEAP: remote programming, schedules, rooms, pairing, backups and undo.",
+      "description": "Lutron Caséta / RA2 Select companion for Home Assistant: what Pico buttons do in Lutron, Lutron schedules, rooms and names, adding devices, backups.",
       "category": "iot",
       "keywords": [
         "lutron",
         "caseta",
         "ra2-select",
         "leap",
-        "smart-home"
+        "smart-home",
+        "home-assistant"
       ]
     }
   ]

@@ -1,8 +1,8 @@
 # LEAP notes: RA2 Select programming, schedules and pairing
 
 What leapctl relies on, as observed on an RA2 Select main repeater (LEAP `01.124`, product type
-"Lutron RA2 Select Project") with a client certificate from `lap-pair` (session role `Admin`). Caséta
-bridges share most of this. Status codes and error texts are quoted exactly. Corrections and reports
+"Lutron RA2 Select Project") with Home Assistant's client certificate (made by pylutron-caseta's pairing
+code, the same as `lap-pair`; session role `Admin`). Caséta bridges share most of this. Status codes and error texts are quoted exactly. Corrections and reports
 from other hardware are welcome.
 
 ## Transport
